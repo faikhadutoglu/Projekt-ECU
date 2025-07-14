@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-RepoManager – Repository-Updater & -Ausleser mit ConstructionKit Integration
-Integriert das ConstructionKit-Verwaltungstool in eine benutzerfreundliche Oberfläche.
+RepoManager – Repository-Updater & JSON-Ausleser
+Ein mächtiges Tool für Repository- und JSON-Datei-Management
 """
 import sys
 import os
@@ -38,9 +38,9 @@ def clear_screen():
 def print_banner():
     """Schönen Banner mit Farben ausgeben"""
     print(f"{Colors.CYAN}{'='*80}{Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.MAGENTA}🚀 RepoManager – Repository-Updater & ConstructionKit Manager 🚀{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.MAGENTA}🚀 RepoManager – Repository-Updater & JSON-Manager 🚀{Colors.RESET}")
     print(f"{Colors.CYAN}{'='*80}{Colors.RESET}")
-    print(f"{Colors.GRAY}Ein mächtiges Tool für Repository- und ConstructionKit-Management{Colors.RESET}")
+    print(f"{Colors.GRAY}Ein mächtiges Tool für Repository- und JSON-Datei-Management{Colors.RESET}")
     print(f"{Colors.CYAN}{'='*80}{Colors.RESET}")
 
 def print_menu():
@@ -49,9 +49,9 @@ def print_menu():
     print(f"{Colors.BLUE}{'─'*50}{Colors.RESET}")
     
     menu_items = [
-        ("A", "🔍 ConstructionKit Versionen prüfen", Colors.GREEN),
-        ("B", "📝 Config.json erstellen/bearbeiten", Colors.CYAN),
-        ("C", "🔄 ConstructionKit Versionen updaten", Colors.YELLOW),
+        ("A", "🔍 JSON-Dateien analysieren", Colors.GREEN),
+        ("B", "📝 Konfiguration bearbeiten", Colors.CYAN),
+        ("C", "🔄 JSON-Werte updaten", Colors.YELLOW),
         ("D", "📊 Letzte Ergebnisse anzeigen", Colors.MAGENTA),
         ("E", "⚙️  GitHub Token konfigurieren", Colors.BLUE),
         ("F", "🚪 Exit", Colors.RED)
@@ -68,12 +68,15 @@ def load_config():
     
     # Standard-Konfiguration
     default_config = {
-        "recipe_path": "build.json",
+        "target_file": "build.json",
         "branch_pattern": "release/*",
         "repos": [
             "spx01/STLA.BSW.ZCU_CL",
             "spx01/STLA.BSW.ZCU_CR"
-        ]
+        ],
+        "search_mode": "full",  # "full" oder "specific"
+        "search_key": "",       # Spezifischer Schlüssel zum Suchen
+        "search_value": ""      # Spezifischer Wert zum Suchen
     }
     
     # Wenn config.json nicht existiert, erstelle sie
@@ -90,6 +93,10 @@ def load_config():
     try:
         with open(config_file) as f:
             config = json.load(f)
+        # Fehlende Schlüssel mit Standardwerten ergänzen
+        for key, value in default_config.items():
+            if key not in config:
+                config[key] = value
         return config
     except Exception as e:
         print(f"{Colors.RED}❌ Fehler beim Laden der config.json: {e}{Colors.RESET}")
@@ -136,20 +143,82 @@ def get_file_content(owner, repo, path, branch):
         return base64.b64decode(content["content"]).decode(), content["sha"]
     return None, None
 
-def find_constructionkit_version(content):
-    """ConstructionKit Version aus Dateiinhalt extrahieren"""
-    for line in content.splitlines():
-        if line.strip().startswith("constructionkit/"):
-            return line.strip()
-    return None
+def search_in_json(json_content, search_key="", search_value=""):
+    """JSON-Inhalt durchsuchen"""
+    try:
+        data = json.loads(json_content)
+        results = {}
+        
+        if not search_key and not search_value:
+            # Vollständige JSON-Struktur zurückgeben
+            return data
+        
+        # Spezifische Suche
+        def search_recursive(obj, path=""):
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    current_path = f"{path}.{key}" if path else key
+                    
+                    # Schlüssel-Suche
+                    if search_key and search_key.lower() in key.lower():
+                        results[current_path] = value
+                    
+                    # Wert-Suche
+                    if search_value and isinstance(value, str) and search_value.lower() in value.lower():
+                        results[current_path] = value
+                    
+                    # Rekursiv weitersuchen
+                    if isinstance(value, (dict, list)):
+                        search_recursive(value, current_path)
+                        
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    current_path = f"{path}[{i}]"
+                    if isinstance(item, (dict, list)):
+                        search_recursive(item, current_path)
+                    elif search_value and isinstance(item, str) and search_value.lower() in item.lower():
+                        results[current_path] = item
+        
+        search_recursive(data)
+        return results
+        
+    except json.JSONDecodeError as e:
+        print(f"{Colors.RED}❌ JSON-Fehler: {e}{Colors.RESET}")
+        return None
 
-def update_version_in_content(content, new_version):
-    """Version in Dateiinhalt aktualisieren"""
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        if line.strip().startswith("constructionkit/"):
-            lines[i] = f"constructionkit/{new_version}@spx00/release"
-    return "\n".join(lines)
+def update_json_value(json_content, key_path, new_value):
+    """JSON-Wert an spezifischem Pfad aktualisieren"""
+    try:
+        data = json.loads(json_content)
+        
+        # Pfad aufteilen (z.B. "MPU.AUTOSYNC" -> ["MPU", "AUTOSYNC"])
+        keys = key_path.split('.')
+        current = data
+        
+        # Bis zum vorletzten Schlüssel navigieren
+        for key in keys[:-1]:
+            if key in current and isinstance(current[key], dict):
+                current = current[key]
+            else:
+                print(f"{Colors.RED}❌ Pfad nicht gefunden: {key_path}{Colors.RESET}")
+                return None
+        
+        # Letzten Wert aktualisieren
+        final_key = keys[-1]
+        if final_key in current:
+            old_value = current[final_key]
+            current[final_key] = new_value
+            print(f"{Colors.GREEN}✅ Aktualisiert: {key_path}{Colors.RESET}")
+            print(f"  {Colors.YELLOW}Alt: {old_value}{Colors.RESET}")
+            print(f"  {Colors.GREEN}Neu: {new_value}{Colors.RESET}")
+            return json.dumps(data, indent=4)
+        else:
+            print(f"{Colors.RED}❌ Schlüssel nicht gefunden: {final_key}{Colors.RESET}")
+            return None
+            
+    except json.JSONDecodeError as e:
+        print(f"{Colors.RED}❌ JSON-Fehler: {e}{Colors.RESET}")
+        return None
 
 def create_branch(owner, repo, base_branch, new_branch):
     """Neuen Branch erstellen"""
@@ -177,9 +246,9 @@ def create_pull_request(owner, repo, head, base, title, body):
     r = requests.post(url, headers=HEADERS, json=data)
     return r.json()["html_url"]
 
-def check_constructionkit_versions():
-    """ConstructionKit Versionen in allen konfigurierten Repositories prüfen"""
-    print(f"\n{Colors.BOLD}{Colors.GREEN}🔍 CONSTRUCTIONKIT VERSIONEN PRÜFEN{Colors.RESET}")
+def analyze_json_files():
+    """JSON-Dateien in allen konfigurierten Repositories analysieren"""
+    print(f"\n{Colors.BOLD}{Colors.GREEN}🔍 JSON-DATEIEN ANALYSIEREN{Colors.RESET}")
     print(f"{Colors.BLUE}{'─'*50}{Colors.RESET}")
     
     if not GITHUB_TOKEN or GITHUB_TOKEN == "...":
@@ -190,19 +259,32 @@ def check_constructionkit_versions():
     
     # Konfiguration laden
     config = load_config()
-    recipe_path = config["recipe_path"]
+    target_file = config["target_file"]
     branch_pattern = config["branch_pattern"]
     repos = config["repos"]
+    search_mode = config["search_mode"]
+    search_key = config["search_key"]
+    search_value = config["search_value"]
     
     print(f"{Colors.YELLOW}📋 Konfiguration:{Colors.RESET}")
-    print(f"  Recipe Path: {Colors.CYAN}{recipe_path}{Colors.RESET}")
+    print(f"  Target File: {Colors.CYAN}{target_file}{Colors.RESET}")
     print(f"  Branch Pattern: {Colors.CYAN}{branch_pattern}{Colors.RESET}")
+    print(f"  Search Mode: {Colors.CYAN}{search_mode}{Colors.RESET}")
+    if search_mode == "specific":
+        print(f"  Search Key: {Colors.CYAN}{search_key or 'N/A'}{Colors.RESET}")
+        print(f"  Search Value: {Colors.CYAN}{search_value or 'N/A'}{Colors.RESET}")
     print(f"  Repositories: {Colors.CYAN}{len(repos)}{Colors.RESET}")
     
-    output = {"recipe_path": recipe_path, "output": {}}
+    output = {
+        "target_file": target_file,
+        "search_mode": search_mode,
+        "search_key": search_key,
+        "search_value": search_value,
+        "results": {}
+    }
     
     for repo_full in repos:
-        print(f"\n{Colors.BOLD}🔄 Prüfe {repo_full}...{Colors.RESET}")
+        print(f"\n{Colors.BOLD}🔄 Analysiere {repo_full}...{Colors.RESET}")
         owner, repo = repo_full.split("/")
         
         try:
@@ -211,35 +293,34 @@ def check_constructionkit_versions():
             
             print(f"  {Colors.GREEN}✓ Gefundene Branches: {len(matching_branches)}{Colors.RESET}")
             
-            output['output'][repo_full] = {
-                "fixed_versions": [],
-                "latest_versions": [],
-                "unknown_versions": []
-            }
+            output['results'][repo_full] = {}
             
             for branch in matching_branches:
-                content, sha = get_file_content(owner, repo, recipe_path, branch)
+                content, sha = get_file_content(owner, repo, target_file, branch)
                 if not content:
                     print(f"    {Colors.RED}❌ {branch}: Datei nicht gefunden{Colors.RESET}")
-                    output['output'][repo_full]["unknown_versions"].append((branch, ''))
+                    output['results'][repo_full][branch] = {"error": "File not found"}
                     continue
                 
-                current_version = find_constructionkit_version(content)
-                if current_version:
-                    print(f"    {Colors.GREEN}✓ {branch}: {current_version}{Colors.RESET}")
-                    
-                    # Fixed versions prüfen
-                    if re.findall(r"^.*\[(\d+\.\d+\.\d+|>\d+\.\d+\.\d+\s*<\d+\.\d+\.\d+|\d+\.\d+\.\d+\s*\|\|\s*>\d+\.\d+\.\d+\s*<\d+\.\d+\.\d+)].*$", current_version) or \
-                       re.findall(r"^.*/\d+\.\d+\.\d+@.*$", current_version):
-                        output['output'][repo_full]["fixed_versions"].append((branch, current_version))
-                    # Latest versions prüfen
-                    elif re.findall(r"^.*\[>=\d+\.\d+\.\d+].*$", current_version):
-                        output['output'][repo_full]["latest_versions"].append((branch, current_version))
+                if search_mode == "full":
+                    # Komplette JSON-Struktur analysieren
+                    json_data = search_in_json(content)
+                    if json_data:
+                        output['results'][repo_full][branch] = json_data
+                        print(f"    {Colors.GREEN}✓ {branch}: JSON-Struktur erfasst{Colors.RESET}")
                     else:
-                        output['output'][repo_full]["unknown_versions"].append((branch, current_version))
-                else:
-                    print(f"    {Colors.YELLOW}⚠️  {branch}: Keine ConstructionKit Version gefunden{Colors.RESET}")
-                    output['output'][repo_full]["unknown_versions"].append((branch, ''))
+                        output['results'][repo_full][branch] = {"error": "Invalid JSON"}
+                        print(f"    {Colors.RED}❌ {branch}: Ungültiges JSON{Colors.RESET}")
+                
+                elif search_mode == "specific":
+                    # Spezifische Suche
+                    search_results = search_in_json(content, search_key, search_value)
+                    if search_results:
+                        output['results'][repo_full][branch] = search_results
+                        print(f"    {Colors.GREEN}✓ {branch}: {len(search_results)} Treffer{Colors.RESET}")
+                    else:
+                        output['results'][repo_full][branch] = {}
+                        print(f"    {Colors.YELLOW}⚠️  {branch}: Keine Treffer{Colors.RESET}")
                 
                 time.sleep(0.5)  # Rate limiting
             
@@ -252,39 +333,43 @@ def check_constructionkit_versions():
     with open("output.json", "w") as f:
         json.dump(output, f, indent=4)
     
-    print(f"\n{Colors.GREEN}✅ Prüfung abgeschlossen!{Colors.RESET}")
+    print(f"\n{Colors.GREEN}✅ Analyse abgeschlossen!{Colors.RESET}")
     print(f"{Colors.CYAN}Ergebnisse in output.json gespeichert.{Colors.RESET}")
     
     input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
 
 def create_edit_config():
     """Config.json erstellen oder bearbeiten"""
-    print(f"\n{Colors.BOLD}{Colors.CYAN}📝 CONFIG.JSON ERSTELLEN/BEARBEITEN{Colors.RESET}")
+    print(f"\n{Colors.BOLD}{Colors.CYAN}📝 KONFIGURATION BEARBEITEN{Colors.RESET}")
     print(f"{Colors.BLUE}{'─'*50}{Colors.RESET}")
     
     # Aktuelle Konfiguration laden
     config = load_config()
     
     print(f"{Colors.YELLOW}📋 Aktuelle Konfiguration:{Colors.RESET}")
-    print(f"  Recipe Path: {Colors.CYAN}{config['recipe_path']}{Colors.RESET}")
+    print(f"  Target File: {Colors.CYAN}{config['target_file']}{Colors.RESET}")
     print(f"  Branch Pattern: {Colors.CYAN}{config['branch_pattern']}{Colors.RESET}")
+    print(f"  Search Mode: {Colors.CYAN}{config['search_mode']}{Colors.RESET}")
+    print(f"  Search Key: {Colors.CYAN}{config['search_key'] or 'N/A'}{Colors.RESET}")
+    print(f"  Search Value: {Colors.CYAN}{config['search_value'] or 'N/A'}{Colors.RESET}")
     print(f"  Repositories: {Colors.CYAN}{len(config['repos'])}{Colors.RESET}")
     for i, repo in enumerate(config['repos'], 1):
         print(f"    {i}. {repo}")
     
     print(f"\n{Colors.YELLOW}Was möchten Sie bearbeiten?{Colors.RESET}")
-    print(f"[1] Recipe Path ändern")
+    print(f"[1] Target File ändern")
     print(f"[2] Branch Pattern ändern")
-    print(f"[3] Repositories bearbeiten")
-    print(f"[4] Alle Einstellungen zurücksetzen")
-    print(f"[5] Zurück zum Hauptmenü")
+    print(f"[3] Search Mode konfigurieren")
+    print(f"[4] Repositories bearbeiten")
+    print(f"[5] Alle Einstellungen zurücksetzen")
+    print(f"[6] Zurück zum Hauptmenü")
     
-    choice = input(f"Auswahl [5]: ").strip()
+    choice = input(f"Auswahl [6]: ").strip()
     
     if choice == "1":
-        new_path = input(f"Neuer Recipe Path [{config['recipe_path']}]: ").strip()
-        if new_path:
-            config['recipe_path'] = new_path
+        new_file = input(f"Neue Target File [{config['target_file']}]: ").strip()
+        if new_file:
+            config['target_file'] = new_file
             
     elif choice == "2":
         new_pattern = input(f"Neues Branch Pattern [{config['branch_pattern']}]: ").strip()
@@ -292,22 +377,28 @@ def create_edit_config():
             config['branch_pattern'] = new_pattern
             
     elif choice == "3":
-        edit_repositories(config)
+        configure_search_mode(config)
         
     elif choice == "4":
+        edit_repositories(config)
+        
+    elif choice == "5":
         confirm = input(f"{Colors.RED}Alle Einstellungen zurücksetzen? (ja/nein): {Colors.RESET}").strip().lower()
         if confirm in ['ja', 'yes', 'j', 'y']:
             config = {
-                "recipe_path": "build.json",
+                "target_file": "build.json",
                 "branch_pattern": "release/*",
                 "repos": [
                     "spx01/STLA.BSW.ZCU_CL",
                     "spx01/STLA.BSW.ZCU_CR"
-                ]
+                ],
+                "search_mode": "full",
+                "search_key": "",
+                "search_value": ""
             }
             print(f"{Colors.GREEN}✅ Konfiguration zurückgesetzt{Colors.RESET}")
     
-    elif choice == "5" or not choice:
+    elif choice == "6" or not choice:
         input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
         return
     
@@ -318,6 +409,38 @@ def create_edit_config():
         print(f"\n{Colors.RED}❌ Fehler beim Speichern!{Colors.RESET}")
     
     input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
+
+def configure_search_mode(config):
+    """Search Mode konfigurieren"""
+    print(f"\n{Colors.YELLOW}🔍 SEARCH MODE KONFIGURIEREN{Colors.RESET}")
+    print(f"{Colors.BLUE}{'─'*30}{Colors.RESET}")
+    
+    print(f"[1] Full - Komplette JSON-Struktur analysieren")
+    print(f"[2] Specific - Nach spezifischen Schlüsseln/Werten suchen")
+    
+    choice = input(f"Auswahl: ").strip()
+    
+    if choice == "1":
+        config['search_mode'] = "full"
+        config['search_key'] = ""
+        config['search_value'] = ""
+        print(f"{Colors.GREEN}✅ Full Mode aktiviert{Colors.RESET}")
+        
+    elif choice == "2":
+        config['search_mode'] = "specific"
+        
+        print(f"\n{Colors.YELLOW}Spezifische Suche konfigurieren:{Colors.RESET}")
+        search_key = input(f"Schlüssel zum Suchen (leer für alle): ").strip()
+        search_value = input(f"Wert zum Suchen (leer für alle): ").strip()
+        
+        config['search_key'] = search_key
+        config['search_value'] = search_value
+        
+        print(f"{Colors.GREEN}✅ Specific Mode aktiviert{Colors.RESET}")
+        if search_key:
+            print(f"  Search Key: {search_key}")
+        if search_value:
+            print(f"  Search Value: {search_value}")
 
 def edit_repositories(config):
     """Repository-Liste bearbeiten"""
@@ -393,9 +516,9 @@ def edit_repositories(config):
         elif choice == "5" or not choice:
             break
 
-def update_constructionkit_versions():
-    """ConstructionKit Versionen updaten und Pull Requests erstellen"""
-    print(f"\n{Colors.BOLD}{Colors.YELLOW}🔄 CONSTRUCTIONKIT VERSIONEN UPDATEN{Colors.RESET}")
+def update_json_values():
+    """JSON-Werte updaten und Pull Requests erstellen"""
+    print(f"\n{Colors.BOLD}{Colors.YELLOW}🔄 JSON-WERTE UPDATEN{Colors.RESET}")
     print(f"{Colors.BLUE}{'─'*50}{Colors.RESET}")
     
     if not GITHUB_TOKEN or GITHUB_TOKEN == "...":
@@ -407,54 +530,93 @@ def update_constructionkit_versions():
     output_file = "output.json"
     if not os.path.exists(output_file):
         print(f"{Colors.RED}❌ output.json nicht gefunden!{Colors.RESET}")
-        print(f"{Colors.YELLOW}Bitte erst Versionen in Option A prüfen.{Colors.RESET}")
+        print(f"{Colors.YELLOW}Bitte erst JSON-Dateien in Option A analysieren.{Colors.RESET}")
         input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
         return
     
-    # Neue Version eingeben
-    new_version = input(f"{Colors.YELLOW}Neue ConstructionKit Version (z.B. 1.44.0): {Colors.RESET}").strip()
-    if not new_version:
-        print(f"{Colors.RED}❌ Keine Version eingegeben!{Colors.RESET}")
+    # Update-Konfiguration eingeben
+    print(f"{Colors.YELLOW}Update-Konfiguration:{Colors.RESET}")
+    key_path = input(f"JSON-Pfad (z.B. MPU.AUTOSYNC oder PROJECT_NAME): ").strip()
+    if not key_path:
+        print(f"{Colors.RED}❌ Kein Pfad eingegeben!{Colors.RESET}")
         input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
         return
+    
+    new_value = input(f"Neuer Wert: ").strip()
+    if not new_value:
+        print(f"{Colors.RED}❌ Kein Wert eingegeben!{Colors.RESET}")
+        input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
+        return
+    
+    # Wert-Typ bestimmen
+    print(f"\n{Colors.YELLOW}Wert-Typ:{Colors.RESET}")
+    print(f"[1] String (Text)")
+    print(f"[2] Number (Zahl)")
+    print(f"[3] Boolean (true/false)")
+    
+    value_type = input(f"Typ [1]: ").strip()
+    
+    if value_type == "2":
+        try:
+            new_value = float(new_value) if '.' in new_value else int(new_value)
+        except ValueError:
+            print(f"{Colors.RED}❌ Ungültige Zahl!{Colors.RESET}")
+            input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
+            return
+    elif value_type == "3":
+        new_value = new_value.lower() in ['true', '1', 'yes', 'ja']
     
     try:
         with open(output_file) as f:
-            config = json.load(f)
+            results = json.load(f)
         
-        recipe_path = config["recipe_path"]
+        target_file = results["target_file"]
         list_of_prs = []
         
-        print(f"\n{Colors.YELLOW}🔄 Aktualisiere auf Version: {new_version}{Colors.RESET}")
+        print(f"\n{Colors.YELLOW}🔄 Aktualisiere {key_path} = {new_value}{Colors.RESET}")
         
-        for repo_full, branches_info in config['output'].items():
-            if not branches_info["latest_versions"]:
-                print(f"{Colors.GRAY}⏭️  {repo_full}: Keine Latest-Versions gefunden{Colors.RESET}")
+        for repo_full, branches_data in results['results'].items():
+            if not branches_data:
+                print(f"{Colors.GRAY}⏭️  {repo_full}: Keine Daten gefunden{Colors.RESET}")
                 continue
             
             print(f"\n{Colors.BOLD}🔄 Bearbeite {repo_full}...{Colors.RESET}")
             
-            for branch, current_version in branches_info["latest_versions"]:
+            for branch, branch_data in branches_data.items():
+                if "error" in branch_data:
+                    print(f"  {Colors.RED}❌ {branch}: {branch_data['error']}{Colors.RESET}")
+                    continue
+                
                 try:
-                    pr_branch = f"update-ckit-version-{branch}"
+                    pr_branch = f"update-json-{key_path.replace('.', '-')}-{branch}"
                     owner, repo = repo_full.split("/")
                     
-                    print(f"  {Colors.YELLOW}🔄 {branch}: {current_version} → {new_version}{Colors.RESET}")
+                    print(f"  {Colors.YELLOW}🔄 {branch}: Aktualisiere {key_path}{Colors.RESET}")
+                    
+                    # Aktuelle Datei abrufen
+                    content, sha = get_file_content(owner, repo, target_file, branch)
+                    if not content:
+                        print(f"    {Colors.RED}❌ Datei nicht gefunden{Colors.RESET}")
+                        continue
+                    
+                    # JSON aktualisieren
+                    updated_content = update_json_value(content, key_path, new_value)
+                    if not updated_content:
+                        print(f"    {Colors.RED}❌ Update fehlgeschlagen{Colors.RESET}")
+                        continue
                     
                     # Branch erstellen
                     create_branch(owner, repo, branch, pr_branch)
                     
                     # Datei aktualisieren
-                    content, sha = get_file_content(owner, repo, recipe_path, branch)
-                    new_content = update_version_in_content(content, new_version)
-                    update_file(owner, repo, recipe_path, new_content, sha, pr_branch,
-                                f"Update constructionkit to {new_version}")
+                    update_file(owner, repo, target_file, updated_content, sha, pr_branch,
+                                f"Update {key_path} to {new_value}")
                     
                     # Pull Request erstellen
                     pr_url = create_pull_request(
                         owner, repo, pr_branch, branch,
-                        f"Update constructionkit to {new_version}",
-                        f"This PR updates constructionkit to version {new_version}."
+                        f"Update {key_path} to {new_value}",
+                        f"This PR updates {key_path} to {new_value} in {target_file}."
                     )
                     
                     print(f"    {Colors.GREEN}✅ PR erstellt: {pr_url}{Colors.RESET}")
@@ -491,7 +653,7 @@ def show_last_results():
     output_file = "output.json"
     if not os.path.exists(output_file):
         print(f"{Colors.RED}❌ Keine Ergebnisse gefunden!{Colors.RESET}")
-        print(f"{Colors.YELLOW}Bitte erst Versionen in Option A prüfen.{Colors.RESET}")
+        print(f"{Colors.YELLOW}Bitte erst JSON-Dateien in Option A analysieren.{Colors.RESET}")
         input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
         return
     
@@ -499,28 +661,47 @@ def show_last_results():
         with open(output_file) as f:
             results = json.load(f)
         
-        print(f"{Colors.YELLOW}📋 Ergebnisse für Recipe Path: {Colors.CYAN}{results['recipe_path']}{Colors.RESET}")
+        print(f"{Colors.YELLOW}📋 Analyse-Ergebnisse:{Colors.RESET}")
+        print(f"  Target File: {Colors.CYAN}{results['target_file']}{Colors.RESET}")
+        print(f"  Search Mode: {Colors.CYAN}{results['search_mode']}{Colors.RESET}")
+        if results['search_mode'] == 'specific':
+            print(f"  Search Key: {Colors.CYAN}{results['search_key'] or 'N/A'}{Colors.RESET}")
+            print(f"  Search Value: {Colors.CYAN}{results['search_value'] or 'N/A'}{Colors.RESET}")
         
-        for repo_full, branches_info in results['output'].items():
+        for repo_full, branches_data in results['results'].items():
             print(f"\n{Colors.BOLD}📦 {repo_full}:{Colors.RESET}")
             
-            # Fixed Versions
-            if branches_info["fixed_versions"]:
-                print(f"  {Colors.GREEN}🔒 Fixed Versions ({len(branches_info['fixed_versions'])}):{Colors.RESET}")
-                for branch, version in branches_info["fixed_versions"]:
-                    print(f"    {Colors.CYAN}{branch}{Colors.RESET}: {version}")
+            if not branches_data:
+                print(f"  {Colors.RED}❌ Keine Daten{Colors.RESET}")
+                continue
             
-            # Latest Versions
-            if branches_info["latest_versions"]:
-                print(f"  {Colors.YELLOW}🔄 Latest Versions ({len(branches_info['latest_versions'])}):{Colors.RESET}")
-                for branch, version in branches_info["latest_versions"]:
-                    print(f"    {Colors.CYAN}{branch}{Colors.RESET}: {version}")
-            
-            # Unknown Versions
-            if branches_info["unknown_versions"]:
-                print(f"  {Colors.RED}❓ Unknown/Missing ({len(branches_info['unknown_versions'])}):{Colors.RESET}")
-                for branch, version in branches_info["unknown_versions"]:
-                    print(f"    {Colors.CYAN}{branch}{Colors.RESET}: {version or 'N/A'}")
+            for branch, branch_data in branches_data.items():
+                print(f"\n  {Colors.CYAN}🌿 {branch}:{Colors.RESET}")
+                
+                if "error" in branch_data:
+                    print(f"    {Colors.RED}❌ {branch_data['error']}{Colors.RESET}")
+                    continue
+                
+                if results['search_mode'] == 'full':
+                    # Vollständige JSON-Struktur anzeigen (verkürzt)
+                    print(f"    {Colors.GREEN}✅ JSON-Struktur erfasst{Colors.RESET}")
+                    if isinstance(branch_data, dict):
+                        for key, value in list(branch_data.items())[:5]:  # Nur erste 5 Einträge
+                            if isinstance(value, (dict, list)):
+                                print(f"      {Colors.YELLOW}{key}{Colors.RESET}: {type(value).__name__} ({len(value)} items)")
+                            else:
+                                print(f"      {Colors.YELLOW}{key}{Colors.RESET}: {value}")
+                        if len(branch_data) > 5:
+                            print(f"      {Colors.GRAY}... und {len(branch_data) - 5} weitere{Colors.RESET}")
+                
+                elif results['search_mode'] == 'specific':
+                    # Spezifische Suchergebnisse anzeigen
+                    if branch_data:
+                        print(f"    {Colors.GREEN}✅ {len(branch_data)} Treffer:{Colors.RESET}")
+                        for path, value in branch_data.items():
+                            print(f"      {Colors.YELLOW}{path}{Colors.RESET}: {value}")
+                    else:
+                        print(f"    {Colors.YELLOW}⚠️  Keine Treffer{Colors.RESET}")
         
         # PR-Liste anzeigen falls vorhanden
         pr_file = "created_prs.txt"
@@ -532,10 +713,44 @@ def show_last_results():
                     if pr.strip():
                         print(f"  {i}. {Colors.CYAN}{pr}{Colors.RESET}")
         
+        # Detailansicht anbieten
+        print(f"\n{Colors.YELLOW}Möchten Sie eine detaillierte Ansicht eines Branches?{Colors.RESET}")
+        detail_choice = input(f"Repository/Branch (z.B. spx01/STLA.BSW.ZCU_CL/release/1.0) oder Enter zum Beenden: ").strip()
+        
+        if detail_choice:
+            show_detailed_view(results, detail_choice)
+        
     except Exception as e:
         print(f"{Colors.RED}❌ Fehler beim Lesen der Ergebnisse: {e}{Colors.RESET}")
     
     input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
+
+def show_detailed_view(results, path):
+    """Detaillierte Ansicht für spezifischen Branch"""
+    try:
+        parts = path.split('/')
+        if len(parts) >= 3:
+            repo_full = '/'.join(parts[:2])
+            branch = '/'.join(parts[2:])
+            
+            if repo_full in results['results'] and branch in results['results'][repo_full]:
+                branch_data = results['results'][repo_full][branch]
+                
+                print(f"\n{Colors.BOLD}🔍 DETAILANSICHT: {repo_full} / {branch}{Colors.RESET}")
+                print(f"{Colors.BLUE}{'─'*60}{Colors.RESET}")
+                
+                if "error" in branch_data:
+                    print(f"{Colors.RED}❌ {branch_data['error']}{Colors.RESET}")
+                    return
+                
+                # JSON formatiert ausgeben
+                print(json.dumps(branch_data, indent=2, ensure_ascii=False))
+            else:
+                print(f"{Colors.RED}❌ Pfad nicht gefunden: {path}{Colors.RESET}")
+        else:
+            print(f"{Colors.RED}❌ Ungültiger Pfad. Format: org/repo/branch{Colors.RESET}")
+    except Exception as e:
+        print(f"{Colors.RED}❌ Fehler: {e}{Colors.RESET}")
 
 def configure_github_token():
     """GitHub Token konfigurieren"""
@@ -575,9 +790,9 @@ def exit_program():
 
 # Aktionen-Dictionary
 ACTIONS = {
-    "A": ("ConstructionKit Versionen prüfen", check_constructionkit_versions),
-    "B": ("Config.json erstellen/bearbeiten", create_edit_config),
-    "C": ("ConstructionKit Versionen updaten", update_constructionkit_versions),
+    "A": ("JSON-Dateien analysieren", analyze_json_files),
+    "B": ("Konfiguration bearbeiten", create_edit_config),
+    "C": ("JSON-Werte updaten", update_json_values),
     "D": ("Letzte Ergebnisse anzeigen", show_last_results),
     "E": ("GitHub Token konfigurieren", configure_github_token),
     "F": ("Exit", exit_program),
