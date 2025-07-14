@@ -62,50 +62,6 @@ def print_menu():
     
     print(f"{Colors.BLUE}{'─'*50}{Colors.RESET}")
 
-def load_config():
-    """Konfiguration laden oder erstellen"""
-    config_file = "config.json"
-    
-    # Standard-Konfiguration
-    default_config = {
-        "recipe_path": "build.json",
-        "branch_pattern": "release/*",
-        "repos": [
-            "spx01/STLA.BSW.ZCU_CL",
-            "spx01/STLA.BSW.ZCU_CR"
-        ]
-    }
-    
-    # Wenn config.json nicht existiert, erstelle sie
-    if not os.path.exists(config_file):
-        try:
-            with open(config_file, "w") as f:
-                json.dump(default_config, f, indent=4)
-            print(f"{Colors.GREEN}✅ Standard config.json erstellt{Colors.RESET}")
-        except Exception as e:
-            print(f"{Colors.RED}❌ Fehler beim Erstellen der config.json: {e}{Colors.RESET}")
-            return default_config
-    
-    # Konfiguration laden
-    try:
-        with open(config_file) as f:
-            config = json.load(f)
-        return config
-    except Exception as e:
-        print(f"{Colors.RED}❌ Fehler beim Laden der config.json: {e}{Colors.RESET}")
-        return default_config
-
-def save_config(config):
-    """Konfiguration speichern"""
-    config_file = "config.json"
-    try:
-        with open(config_file, "w") as f:
-            json.dump(config, f, indent=4)
-        return True
-    except Exception as e:
-        print(f"{Colors.RED}❌ Fehler beim Speichern der config.json: {e}{Colors.RESET}")
-        return False
-
 def get_branches(owner, repo, limit=None):
     """Branches eines Repositories abrufen"""
     url = f"https://github.psa-cloud.com/api/v3/repos/{owner}/{repo}/branches"
@@ -188,72 +144,83 @@ def check_constructionkit_versions():
         input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
         return
     
-    # Konfiguration laden
-    config = load_config()
-    recipe_path = config["recipe_path"]
-    branch_pattern = config["branch_pattern"]
-    repos = config["repos"]
+    config_file = "config.json"
+    if not os.path.exists(config_file):
+        print(f"{Colors.RED}❌ config.json nicht gefunden!{Colors.RESET}")
+        print(f"{Colors.YELLOW}Bitte erst Config-Datei in Option B erstellen.{Colors.RESET}")
+        input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
+        return
     
-    print(f"{Colors.YELLOW}📋 Konfiguration:{Colors.RESET}")
-    print(f"  Recipe Path: {Colors.CYAN}{recipe_path}{Colors.RESET}")
-    print(f"  Branch Pattern: {Colors.CYAN}{branch_pattern}{Colors.RESET}")
-    print(f"  Repositories: {Colors.CYAN}{len(repos)}{Colors.RESET}")
-    
-    output = {"recipe_path": recipe_path, "output": {}}
-    
-    for repo_full in repos:
-        print(f"\n{Colors.BOLD}🔄 Prüfe {repo_full}...{Colors.RESET}")
-        owner, repo = repo_full.split("/")
+    try:
+        with open(config_file) as f:
+            config = json.load(f)
         
-        try:
-            branches = get_branches(owner, repo)
-            matching_branches = [b for b in branches if fnmatch.fnmatch(b, branch_pattern)]
+        recipe_path = config["recipe_path"]
+        branch_pattern = config["branch_pattern"]
+        
+        print(f"{Colors.YELLOW}📋 Konfiguration:{Colors.RESET}")
+        print(f"  Recipe Path: {Colors.CYAN}{recipe_path}{Colors.RESET}")
+        print(f"  Branch Pattern: {Colors.CYAN}{branch_pattern}{Colors.RESET}")
+        print(f"  Repositories: {Colors.CYAN}{len(config['repos'])}{Colors.RESET}")
+        
+        output = {"recipe_path": recipe_path, "output": {}}
+        
+        for repo_full in config["repos"]:
+            print(f"\n{Colors.BOLD}🔄 Prüfe {repo_full}...{Colors.RESET}")
+            owner, repo = repo_full.split("/")
             
-            print(f"  {Colors.GREEN}✓ Gefundene Branches: {len(matching_branches)}{Colors.RESET}")
-            
-            output['output'][repo_full] = {
-                "fixed_versions": [],
-                "latest_versions": [],
-                "unknown_versions": []
-            }
-            
-            for branch in matching_branches:
-                content, sha = get_file_content(owner, repo, recipe_path, branch)
-                if not content:
-                    print(f"    {Colors.RED}❌ {branch}: Datei nicht gefunden{Colors.RESET}")
-                    output['output'][repo_full]["unknown_versions"].append((branch, ''))
-                    continue
+            try:
+                branches = get_branches(owner, repo)
+                matching_branches = [b for b in branches if fnmatch.fnmatch(b, branch_pattern)]
                 
-                current_version = find_constructionkit_version(content)
-                if current_version:
-                    print(f"    {Colors.GREEN}✓ {branch}: {current_version}{Colors.RESET}")
+                print(f"  {Colors.GREEN}✓ Gefundene Branches: {len(matching_branches)}{Colors.RESET}")
+                
+                output['output'][repo_full] = {
+                    "fixed_versions": [],
+                    "latest_versions": [],
+                    "unknown_versions": []
+                }
+                
+                for branch in matching_branches:
+                    content, sha = get_file_content(owner, repo, recipe_path, branch)
+                    if not content:
+                        print(f"    {Colors.RED}❌ {branch}: Datei nicht gefunden{Colors.RESET}")
+                        output['output'][repo_full]["unknown_versions"].append((branch, ''))
+                        continue
                     
-                    # Fixed versions prüfen
-                    if re.findall(r"^.*\[(\d+\.\d+\.\d+|>\d+\.\d+\.\d+\s*<\d+\.\d+\.\d+|\d+\.\d+\.\d+\s*\|\|\s*>\d+\.\d+\.\d+\s*<\d+\.\d+\.\d+)].*$", current_version) or \
-                       re.findall(r"^.*/\d+\.\d+\.\d+@.*$", current_version):
-                        output['output'][repo_full]["fixed_versions"].append((branch, current_version))
-                    # Latest versions prüfen
-                    elif re.findall(r"^.*\[>=\d+\.\d+\.\d+].*$", current_version):
-                        output['output'][repo_full]["latest_versions"].append((branch, current_version))
+                    current_version = find_constructionkit_version(content)
+                    if current_version:
+                        print(f"    {Colors.GREEN}✓ {branch}: {current_version}{Colors.RESET}")
+                        
+                        # Fixed versions prüfen
+                        if re.findall(r"^.*\[(\d+\.\d+\.\d+|>\d+\.\d+\.\d+\s*<\d+\.\d+\.\d+|\d+\.\d+\.\d+\s*\|\|\s*>\d+\.\d+\.\d+\s*<\d+\.\d+\.\d+)].*$", current_version) or \
+                           re.findall(r"^.*/\d+\.\d+\.\d+@.*$", current_version):
+                            output['output'][repo_full]["fixed_versions"].append((branch, current_version))
+                        # Latest versions prüfen
+                        elif re.findall(r"^.*\[>=\d+\.\d+\.\d+].*$", current_version):
+                            output['output'][repo_full]["latest_versions"].append((branch, current_version))
+                        else:
+                            output['output'][repo_full]["unknown_versions"].append((branch, current_version))
                     else:
-                        output['output'][repo_full]["unknown_versions"].append((branch, current_version))
-                else:
-                    print(f"    {Colors.YELLOW}⚠️  {branch}: Keine ConstructionKit Version gefunden{Colors.RESET}")
-                    output['output'][repo_full]["unknown_versions"].append((branch, ''))
+                        print(f"    {Colors.YELLOW}⚠️  {branch}: Keine ConstructionKit Version gefunden{Colors.RESET}")
+                        output['output'][repo_full]["unknown_versions"].append((branch, ''))
+                    
+                    time.sleep(0.5)  # Rate limiting
                 
-                time.sleep(0.5)  # Rate limiting
+            except Exception as e:
+                print(f"    {Colors.RED}❌ Fehler bei {repo_full}: {e}{Colors.RESET}")
             
-        except Exception as e:
-            print(f"    {Colors.RED}❌ Fehler bei {repo_full}: {e}{Colors.RESET}")
+            time.sleep(0.5)  # Rate limiting
         
-        time.sleep(0.5)  # Rate limiting
-    
-    # Ergebnisse speichern
-    with open("output.json", "w") as f:
-        json.dump(output, f, indent=4)
-    
-    print(f"\n{Colors.GREEN}✅ Prüfung abgeschlossen!{Colors.RESET}")
-    print(f"{Colors.CYAN}Ergebnisse in output.json gespeichert.{Colors.RESET}")
+        # Ergebnisse speichern
+        with open("output.json", "w") as f:
+            json.dump(output, f, indent=4)
+        
+        print(f"\n{Colors.GREEN}✅ Prüfung abgeschlossen!{Colors.RESET}")
+        print(f"{Colors.CYAN}Ergebnisse in output.json gespeichert.{Colors.RESET}")
+        
+    except Exception as e:
+        print(f"{Colors.RED}❌ Fehler: {e}{Colors.RESET}")
     
     input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
 
@@ -262,136 +229,89 @@ def create_edit_config():
     print(f"\n{Colors.BOLD}{Colors.CYAN}📝 CONFIG.JSON ERSTELLEN/BEARBEITEN{Colors.RESET}")
     print(f"{Colors.BLUE}{'─'*50}{Colors.RESET}")
     
-    # Aktuelle Konfiguration laden
-    config = load_config()
+    # Standard-Repositories (alle verfügbaren)
+    default_repos = [
+        "spx01/STLA.BSW.ZCU_CL",
+        "spx01/STLA.FBL.ZCU_Rear"
+    ]
     
-    print(f"{Colors.YELLOW}📋 Aktuelle Konfiguration:{Colors.RESET}")
-    print(f"  Recipe Path: {Colors.CYAN}{config['recipe_path']}{Colors.RESET}")
-    print(f"  Branch Pattern: {Colors.CYAN}{config['branch_pattern']}{Colors.RESET}")
-    print(f"  Repositories: {Colors.CYAN}{len(config['repos'])}{Colors.RESET}")
-    for i, repo in enumerate(config['repos'], 1):
-        print(f"    {i}. {repo}")
+    # Aktuelle Konfiguration laden, falls vorhanden
+    config_file = "config.json"
+    if os.path.exists(config_file):
+        print(f"{Colors.YELLOW}📋 Aktuelle Konfiguration gefunden.{Colors.RESET}")
+        try:
+            with open(config_file) as f:
+                config = json.load(f)
+            print(f"  Recipe Path: {Colors.CYAN}{config.get('recipe_path', 'N/A')}{Colors.RESET}")
+            print(f"  Branch Pattern: {Colors.CYAN}{config.get('branch_pattern', 'N/A')}{Colors.RESET}")
+            print(f"  Repositories: {Colors.CYAN}{len(config.get('repos', []))}{Colors.RESET}")
+        except:
+            config = {}
+    else:
+        config = {}
     
-    print(f"\n{Colors.YELLOW}Was möchten Sie bearbeiten?{Colors.RESET}")
-    print(f"[1] Recipe Path ändern")
-    print(f"[2] Branch Pattern ändern")
-    print(f"[3] Repositories bearbeiten")
-    print(f"[4] Alle Einstellungen zurücksetzen")
-    print(f"[5] Zurück zum Hauptmenü")
+    print(f"\n{Colors.YELLOW}Konfiguration bearbeiten (Enter für Standard-Werte):{Colors.RESET}")
     
-    choice = input(f"Auswahl [5]: ").strip()
+    # Recipe Path - angepasst an deine Konfiguration
+    current_recipe = config.get("recipe_path", "conanrecipe_ckit.txt")
+    recipe_path = input(f"Recipe Path [{Colors.CYAN}{current_recipe}{Colors.RESET}]: ").strip()
+    if not recipe_path:
+        recipe_path = current_recipe
+    
+    # Branch Pattern - angepasst an deine Konfiguration
+    current_pattern = config.get("branch_pattern", "release/*")
+    branch_pattern = input(f"Branch Pattern [{Colors.CYAN}{current_pattern}{Colors.RESET}]: ").strip()
+    if not branch_pattern:
+        branch_pattern = current_pattern
+    
+    # Repositories - angepasst an deine Konfiguration
+    print(f"\n{Colors.YELLOW}Repository-Konfiguration:{Colors.RESET}")
+    print(f"[1] Alle verfügbaren Repositories ({len(default_repos)} Repos)")
+    print(f"[2] Aktuelle Konfiguration beibehalten")
+    print(f"[3] Nur Test-Repositories (ZCU_CL, ZCU_CR)")
+    print(f"[4] Eigene Repositories eingeben")
+    
+    choice = input(f"Auswahl [3]: ").strip()
     
     if choice == "1":
-        new_path = input(f"Neuer Recipe Path [{config['recipe_path']}]: ").strip()
-        if new_path:
-            config['recipe_path'] = new_path
-            
-    elif choice == "2":
-        new_pattern = input(f"Neues Branch Pattern [{config['branch_pattern']}]: ").strip()
-        if new_pattern:
-            config['branch_pattern'] = new_pattern
-            
-    elif choice == "3":
-        edit_repositories(config)
-        
+        repos = default_repos
+    elif choice == "2" and config.get("repos"):
+        repos = config["repos"]
     elif choice == "4":
-        confirm = input(f"{Colors.RED}Alle Einstellungen zurücksetzen? (ja/nein): {Colors.RESET}").strip().lower()
-        if confirm in ['ja', 'yes', 'j', 'y']:
-            config = {
-                "recipe_path": "build.json",
-                "branch_pattern": "release/*",
-                "repos": [
-                    "spx01/STLA.BSW.ZCU_CL",
-                    "spx01/STLA.BSW.ZCU_CR"
-                ]
-            }
-            print(f"{Colors.GREEN}✅ Konfiguration zurückgesetzt{Colors.RESET}")
-    
-    elif choice == "5" or not choice:
-        input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
-        return
-    
-    # Konfiguration speichern
-    if save_config(config):
-        print(f"\n{Colors.GREEN}✅ Konfiguration gespeichert!{Colors.RESET}")
+        repos = []
+        print(f"\n{Colors.YELLOW}Repositories eingeben (leer für Ende):{Colors.RESET}")
+        while True:
+            repo = input(f"Repository (org/name): ").strip()
+            if not repo:
+                break
+            repos.append(repo)
     else:
-        print(f"\n{Colors.RED}❌ Fehler beim Speichern!{Colors.RESET}")
+        # Standard: Test-Repositories wie in deiner config.json
+        repos = [
+            "spx01/STLA.BSW.ZCU_CL",
+            "spx01/STLA.BSW.ZCU_CR"
+        ]
+    
+    # Konfiguration zusammenstellen
+    new_config = {
+        "recipe_path": recipe_path,
+        "branch_pattern": branch_pattern,
+        "repos": repos
+    }
+    
+    # Speichern
+    try:
+        with open(config_file, "w") as f:
+            json.dump(new_config, f, indent=4)
+        
+        print(f"\n{Colors.GREEN}✅ Konfiguration gespeichert!{Colors.RESET}")
+        print(f"{Colors.CYAN}Datei: {config_file}{Colors.RESET}")
+        print(f"{Colors.CYAN}Repositories: {len(repos)}{Colors.RESET}")
+        
+    except Exception as e:
+        print(f"{Colors.RED}❌ Fehler beim Speichern: {e}{Colors.RESET}")
     
     input(f"\n{Colors.CYAN}Drücke Enter um fortzufahren...{Colors.RESET}")
-
-def edit_repositories(config):
-    """Repository-Liste bearbeiten"""
-    while True:
-        print(f"\n{Colors.YELLOW}📦 REPOSITORY-VERWALTUNG{Colors.RESET}")
-        print(f"{Colors.BLUE}{'─'*30}{Colors.RESET}")
-        
-        print(f"{Colors.YELLOW}Aktuelle Repositories:{Colors.RESET}")
-        for i, repo in enumerate(config['repos'], 1):
-            print(f"  {i}. {repo}")
-        
-        print(f"\n{Colors.YELLOW}Optionen:{Colors.RESET}")
-        print(f"[1] Repository hinzufügen")
-        print(f"[2] Repository entfernen")
-        print(f"[3] Repository bearbeiten")
-        print(f"[4] Alle Repositories löschen")
-        print(f"[5] Fertig")
-        
-        choice = input(f"Auswahl [5]: ").strip()
-        
-        if choice == "1":
-            new_repo = input(f"Neues Repository (org/name): ").strip()
-            if new_repo and "/" in new_repo:
-                if new_repo not in config['repos']:
-                    config['repos'].append(new_repo)
-                    print(f"{Colors.GREEN}✅ Repository {new_repo} hinzugefügt{Colors.RESET}")
-                else:
-                    print(f"{Colors.YELLOW}⚠️  Repository bereits vorhanden{Colors.RESET}")
-            else:
-                print(f"{Colors.RED}❌ Ungültiges Format! Verwende: org/name{Colors.RESET}")
-                
-        elif choice == "2":
-            if not config['repos']:
-                print(f"{Colors.YELLOW}⚠️  Keine Repositories vorhanden{Colors.RESET}")
-                continue
-                
-            try:
-                index = int(input(f"Repository-Nummer zum Entfernen (1-{len(config['repos'])}): ")) - 1
-                if 0 <= index < len(config['repos']):
-                    removed = config['repos'].pop(index)
-                    print(f"{Colors.GREEN}✅ Repository {removed} entfernt{Colors.RESET}")
-                else:
-                    print(f"{Colors.RED}❌ Ungültige Nummer{Colors.RESET}")
-            except ValueError:
-                print(f"{Colors.RED}❌ Bitte eine Zahl eingeben{Colors.RESET}")
-                
-        elif choice == "3":
-            if not config['repos']:
-                print(f"{Colors.YELLOW}⚠️  Keine Repositories vorhanden{Colors.RESET}")
-                continue
-                
-            try:
-                index = int(input(f"Repository-Nummer zum Bearbeiten (1-{len(config['repos'])}): ")) - 1
-                if 0 <= index < len(config['repos']):
-                    old_repo = config['repos'][index]
-                    new_repo = input(f"Neuer Name für {old_repo}: ").strip()
-                    if new_repo and "/" in new_repo:
-                        config['repos'][index] = new_repo
-                        print(f"{Colors.GREEN}✅ Repository geändert: {old_repo} → {new_repo}{Colors.RESET}")
-                    else:
-                        print(f"{Colors.RED}❌ Ungültiges Format! Verwende: org/name{Colors.RESET}")
-                else:
-                    print(f"{Colors.RED}❌ Ungültige Nummer{Colors.RESET}")
-            except ValueError:
-                print(f"{Colors.RED}❌ Bitte eine Zahl eingeben{Colors.RESET}")
-                
-        elif choice == "4":
-            confirm = input(f"{Colors.RED}Alle Repositories löschen? (ja/nein): {Colors.RESET}").strip().lower()
-            if confirm in ['ja', 'yes', 'j', 'y']:
-                config['repos'] = []
-                print(f"{Colors.GREEN}✅ Alle Repositories entfernt{Colors.RESET}")
-                
-        elif choice == "5" or not choice:
-            break
 
 def update_constructionkit_versions():
     """ConstructionKit Versionen updaten und Pull Requests erstellen"""
