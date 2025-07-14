@@ -1,12 +1,14 @@
 
 {
-  "recipe_path": "build.json",
-  "branch_pattern": "release/*",
-  "repos": [
-    "spx01/STLA.BSW.ZCU_CL",
-    "spx01/STLA.BSW.ZCU_CR"
-  ]
+    "target_file": "build.json",
+    "branch_pattern": "release/*",
+    "repos": [
+        "spx01/STLA.BSW.ZCU_CL",
+        "spx01/STLA.BSW.ZCU_CR"
+    ],
+    "search_mode": "full",
+    "search_key": "",
+    "search_value": ""
 }
- 
  
  
